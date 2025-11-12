@@ -217,11 +217,13 @@ def _load_font(font_path, font_size):
     # 尝试加载字体
     for font_candidate in font_candidates:
         try:
+            print(f"尝试加载字体: {font_candidate}, 大小: {font_size}")
             return ImageFont.truetype(font_candidate, font_size)
         except (IOError, OSError):
             continue
     
     # 最后回退到默认字体
+    print("回退到默认字体")
     return ImageFont.load_default()
 
 def _calculate_watermark_position(image, text, font):
