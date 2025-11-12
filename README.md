@@ -41,6 +41,7 @@ python watermark_photos.py "照片文件夹路径" --font "字体文件路径"
 - PNG
 - BMP
 - TIFF
+- HEIC/HEIF (需要安装 pillow-heif)
 
 ## 输出
 

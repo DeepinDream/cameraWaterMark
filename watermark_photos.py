@@ -16,20 +16,76 @@ from PIL.ExifTags import TAGS
 from datetime import datetime
 import argparse
 
+# 尝试导入HEIC支持
+try:
+    import pillow_heif
+    HEIC_SUPPORTED = True
+    # 注册HEIF/HEIC格式支持
+    pillow_heif.register_heif_opener()
+except ImportError:
+    HEIC_SUPPORTED = False
+    print("警告: 未安装pillow-heif库，无法处理HEIC格式图片。请运行: pip install pillow-heif")
+
 def get_photo_taken_time(image_path):
     """
     获取照片的拍摄时间
-    优先从EXIF数据中获取，如果没有则使用文件修改时间
+    优先从EXIF数据中获取DateTimeOriginal，如果没有则使用文件修改时间
     """
     try:
         image = Image.open(image_path)
-        exif_data = image._getexif()
         
+        # 尝试获取EXIF数据
+        exif_data = None
+        
+        # 方法1: 标准EXIF获取
+        if hasattr(image, '_getexif'):
+            exif_data = image._getexif()
+        # 方法2: 从info中获取EXIF（适用于HEIC等格式）
+        if not exif_data and hasattr(image, 'info') and 'exif' in image.info:
+            exif_bytes = image.info['exif']
+            if exif_bytes:
+                try:
+                    # 使用PIL的Exif类解析
+                    exif_obj = Image.Exif()
+                    exif_obj.load(exif_bytes)
+                    exif_data = {}
+                    for tag_id, value in exif_obj.items():
+                        tag_name = TAGS.get(tag_id, tag_id)
+                        exif_data[tag_name] = value
+                except Exception as e:
+                    print(f"EXIF解析失败: {e}")
+                    # 尝试手动解析DateTimeOriginal
+                    try:
+                        exif_str = exif_bytes.decode('utf-8', errors='ignore')
+                        # 搜索DateTimeOriginal模式
+                        import re
+                        match = re.search(r'(\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2})', exif_str)
+                        if match:
+                            return datetime.strptime(match.group(1), '%Y:%m:%d %H:%M:%S')
+                    except:
+                        pass
+        
+        # 解析EXIF数据获取拍摄时间
         if exif_data:
+            # 优先查找DateTimeOriginal（拍摄时间）
             for tag, value in exif_data.items():
-                if TAGS.get(tag) == 'DateTimeOriginal':
-                    # 解析EXIF中的拍摄时间
-                    return datetime.strptime(value, '%Y:%m:%d %H:%M:%S')
+                if tag == 'DateTimeOriginal' or (isinstance(tag, int) and TAGS.get(tag) == 'DateTimeOriginal'):
+                    if value and str(value).strip():
+                        try:
+                            print(f"EXIF DateTimeOriginal: {os.path.basename(image_path)} {datetime.strptime(str(value).strip(), '%Y:%m:%d %H:%M:%S')}")
+                            return datetime.strptime(str(value).strip(), '%Y:%m:%d %H:%M:%S')
+                        except ValueError:
+                            continue
+            
+            # 如果没有DateTimeOriginal，尝试DateTime（修改时间）
+            for tag, value in exif_data.items():
+                if tag == 'DateTime' or (isinstance(tag, int) and TAGS.get(tag) == 'DateTime'):
+                    if value and str(value).strip():
+                        try:
+                            print(f"EXIF DateTime: {os.path.basename(image_path)} {datetime.strptime(str(value).strip(), '%Y:%m:%d %H:%M:%S')}")
+                            return datetime.strptime(str(value).strip(), '%Y:%m:%d %H:%M:%S')
+                        except ValueError:
+                            continue
     
     except Exception as e:
         print(f"读取EXIF数据失败: {e}")
@@ -64,13 +120,13 @@ def add_watermark(image_path, output_path, font_path=None):
             
             # 获取EXIF方向标签
             orientation = _get_exif_orientation(image)
-            
-            # 根据方向标签调整图片方向以便添加水印
-            adjusted_image, rotation_info = _adjust_image_for_watermark(image, orientation)
-            
+
             # 获取拍摄时间和水印文本
             taken_time = get_photo_taken_time(image_path)
             watermark_text = taken_time.strftime('%Y-%m-%d %H:%M:%S')
+            
+            # 根据方向标签调整图片方向以便添加水印
+            adjusted_image, rotation_info = _adjust_image_for_watermark(image, orientation)
             
             # 获取调整后的图片尺寸
             adj_width, adj_height = adjusted_image.size
@@ -168,7 +224,6 @@ def _load_font(font_path, font_size):
     # 最后回退到默认字体
     return ImageFont.load_default()
 
-
 def _calculate_watermark_position(image, text, font):
     """
     计算水印位置（右下角）
@@ -210,7 +265,29 @@ def _get_exif_orientation(image):
         int: 方向标签值 (1-8)
     """
     try:
-        exif_data = image._getexif()
+        # 尝试不同的方法获取EXIF数据
+        if hasattr(image, '_getexif'):
+            exif_data = image._getexif()
+        elif hasattr(image, 'info') and 'exif' in image.info:
+            exif_bytes = image.info['exif']
+            try:
+                # 简单解析，寻找方向标签
+                import struct
+                if len(exif_bytes) > 10:
+                    # 搜索方向标签 (0x0112)
+                    for i in range(0, len(exif_bytes) - 10, 12):
+                        if exif_bytes[i:i+2] == b'\x11\x02':  # Orientation tag little endian
+                            orientation = struct.unpack('<H', exif_bytes[i+8:i+10])[0]
+                            return orientation
+                        elif exif_bytes[i:i+2] == b'\x02\x11':  # Orientation tag big endian
+                            orientation = struct.unpack('>H', exif_bytes[i+8:i+10])[0]
+                            return orientation
+            except:
+                pass
+            exif_data = None
+        else:
+            exif_data = None
+        
         if exif_data:
             for tag, value in exif_data.items():
                 if TAGS.get(tag) == 'Orientation':
@@ -295,24 +372,40 @@ def _save_image_with_metadata(image, output_path, original_format, original_info
         original_info (dict): 原始信息字典
         original_exif (bytes): 原始EXIF数据
     """
-    # 准备保存参数
+    # 根据文件扩展名推断格式
+    ext = os.path.splitext(output_path)[1].lower()
+    
+    # HEIC格式特殊处理
+    if ext in ['.heic', '.heif']:
+        # 对于HEIC格式，直接保存为JPEG格式以避免兼容性问题
+        jpeg_output = output_path.rsplit('.', 1)[0] + '.jpg'
+        
+        # 保存EXIF信息
+        save_kwargs = {}
+        if original_exif:
+            save_kwargs['exif'] = original_exif
+        
+        # 保存为JPEG格式
+        image.save(jpeg_output, format='JPEG', **save_kwargs)
+        print(f"注意: HEIC格式已转换为JPEG格式保存: {os.path.basename(jpeg_output)}")
+        return
+    
+    # 其他格式的保存逻辑
     save_kwargs = {}
     
     # 保留EXIF信息
     if original_exif:
         save_kwargs['exif'] = original_exif
     
-    # 保留其他元数据
+    # 保留其他元数据（排除可能导致冲突的参数）
     for key, value in original_info.items():
-        if key not in ['exif'] and key not in save_kwargs:
+        if key not in ['exif', 'primary'] and key not in save_kwargs:
             save_kwargs[key] = value
     
     # 确定保存格式
     if original_format:
         save_kwargs['format'] = original_format
     else:
-        # 根据文件扩展名推断格式
-        ext = os.path.splitext(output_path)[1].lower()
         format_map = {
             '.jpg': 'JPEG',
             '.jpeg': 'JPEG', 
@@ -323,7 +416,7 @@ def _save_image_with_metadata(image, output_path, original_format, original_info
         }
         save_kwargs['format'] = format_map.get(ext, 'JPEG')
     
-    # 保存图片（不进行压缩）
+    # 保存图片
     image.save(output_path, **save_kwargs)
 
 def process_folder(input_folder, font_path=None):
@@ -331,7 +424,13 @@ def process_folder(input_folder, font_path=None):
     处理文件夹中的所有照片
     """
     # 支持的图片格式
-    supported_formats = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif')
+    supported_formats = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heic', '.heif')
+    
+    # 检查HEIC支持
+    if not HEIC_SUPPORTED:
+        print("注意: HEIC/HEIF格式支持不可用，请安装pillow-heif库")
+        print("安装命令: pip install pillow-heif")
+        print("-" * 50)
     
     # 创建输出文件夹
     output_folder = os.path.join(input_folder, 'mask')
