@@ -123,7 +123,7 @@ def add_watermark(image_path, output_path, font_path=None):
 
             # 获取拍摄时间和水印文本
             taken_time = get_photo_taken_time(image_path)
-            watermark_text = taken_time.strftime('%Y-%m-%d %H:%M:%S')
+            watermark_text = taken_time.strftime('%Y-%m-%d %H:%M')
             
             # 根据方向标签调整图片方向以便添加水印
             adjusted_image, rotation_info = _adjust_image_for_watermark(image, orientation)
@@ -376,7 +376,7 @@ def _add_text_with_shadow(draw, position, text, font):
     x, y = position
     
     # 阴影参数
-    shadow_offset = 2  # 阴影偏移量
+    shadow_offset = 3  # 阴影偏移量
     shadow_color = "#000000"  # 黑色阴影
     
     # 加粗参数
@@ -395,6 +395,41 @@ def _add_text_with_shadow(draw, position, text, font):
             draw.text((x + dx, y + dy), text, font=font, fill="#ECAE35")
     
     # 绘制主文字（金色）
+    draw.text((x, y), text, font=font, fill="#ECAE35")
+
+def _add_text_with_border(draw, position, text, font):
+    """
+    为文字添加黑边和阴影效果
+    
+    Args:
+        draw (ImageDraw.Draw): 绘图对象
+        position (tuple): 文字位置 (x, y)
+        text (str): 文字内容
+        font (ImageFont.FreeTypeFont): 字体对象
+    """
+    x, y = position
+    
+    # 黑边参数
+    border_offset = 1  # 黑边偏移量
+    border_color = "#000000"  # 黑色边框
+    
+    # 阴影参数
+    shadow_offset = 3  # 阴影偏移量
+    shadow_color = "#000000"  # 黑色阴影
+    
+    # # 绘制阴影（稍微偏移）
+    # shadow_x = x + shadow_offset
+    # shadow_y = y + shadow_offset
+    # draw.text((shadow_x, shadow_y), text, font=font, fill=shadow_color)
+    
+    # 绘制黑边效果（通过多次绘制实现）
+    for dx in range(-border_offset, border_offset + 1):
+        for dy in range(-border_offset, border_offset + 1):
+            if dx == 0 and dy == 0:
+                continue  # 跳过中心位置，留给主文字
+            draw.text((x + dx, y + dy), text, font=font, fill=border_color)
+    
+    # 绘制主文字（橙色）
     draw.text((x, y), text, font=font, fill="#ECAE35")
 
 
