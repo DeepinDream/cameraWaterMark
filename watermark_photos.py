@@ -74,11 +74,13 @@ def add_watermark(image_path, output_path, font_path=None):
             
             # 加载字体
             font = _load_font(font_path, font_size)
+            
             # 计算水印位置
             position = _calculate_watermark_position(image, watermark_text, font)
             
-            # 添加水印（考虑EXIF方向）
-            _add_text_with_orientation(image, watermark_text, font, position)
+            # 添加水印
+            draw = ImageDraw.Draw(image)
+            draw.text(position, watermark_text, font=font, fill="#FFD700")
             
             # 保存图片，保留所有原始信息
             _save_image_with_metadata(image, output_path, original_format, original_info, original_exif)
@@ -157,9 +159,10 @@ def _load_font(font_path, font_size):
     # 最后回退到默认字体
     return ImageFont.load_default()
 
+
 def _calculate_watermark_position(image, text, font):
     """
-    计算水印位置（右下角），确保竖屏照片水印位置正确且不旋转
+    计算水印位置（右下角）
     
     Args:
         image (PIL.Image): 图片对象
@@ -172,213 +175,19 @@ def _calculate_watermark_position(image, text, font):
     draw = ImageDraw.Draw(image)
     img_width, img_height = image.size
     
-    # 获取EXIF方向信息并计算实际显示尺寸
-    actual_width, actual_height = _get_actual_dimensions(image)
-    
     # 计算文字尺寸
     bbox = draw.textbbox((0, 0), text, font=font)
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
     
-    # 计算边距（根据实际显示尺寸自适应）
-    margin = max(10, min(actual_width, actual_height) // 100)
+    # 计算边距（根据图片大小自适应）
+    margin = max(20, min(img_width, img_height) // 50)
     
-    # 右下角位置计算（基于实际显示尺寸）
-    # 但是要在当前图片尺寸上绘制，所以需要根据方向调整坐标
-    x, y = _adjust_position_for_orientation(
-        img_width, img_height, actual_width, actual_height,
-        text_width, text_height, margin, image
-    )
-    
-    # 确保水印完全在图片内
-    if x < 0:
-        x = max(0, img_width // 20)
-    if y < 0:
-        y = max(0, img_height // 20)
-    
-    # 调试信息（可以取消注释来查看计算过程）
-    # print(f"图片尺寸: {img_width}x{img_height}, 实际显示尺寸: {actual_width}x{actual_height}")
-    # print(f"文字尺寸: {text_width}x{text_height}, 计算位置: ({x}, {y})")
+    # 右下角位置
+    x = img_width - text_width - margin
+    y = img_height - text_height - margin
     
     return (x, y)
-
-
-def _get_actual_dimensions(image):
-    """
-    根据EXIF方向标签获取图片的实际显示尺寸
-    
-    Args:
-        image (PIL.Image): 图片对象
-    
-    Returns:
-        tuple: (actual_width, actual_height) 实际显示尺寸
-    """
-    img_width, img_height = image.size
-    
-    try:
-        exif_data = image._getexif()
-        if exif_data:
-            # EXIF方向标签 (0x0112 = 274)
-            orientation = exif_data.get(274, 1)
-            
-            # 根据方向标签调整尺寸
-            if orientation == 3:  # 旋转180度
-                return img_width, img_height
-            elif orientation == 6:  # 顺时针旋转90度
-                return img_height, img_width
-            elif orientation == 8:  # 逆时针旋转90度
-                return img_height, img_width
-            elif orientation == 5:  # 逆时针旋转90度 + 水平翻转
-                return img_height, img_width
-            elif orientation == 7:  # 顺时针旋转90度 + 水平翻转
-                return img_height, img_width
-            # orientation 1, 2, 4 不需要交换宽高
-            # 1: 正常
-            # 2: 水平翻转
-            # 4: 垂直翻转
-    
-    except Exception:
-        pass
-    
-    # 默认返回原始尺寸
-    return img_width, img_height
-
-
-def _adjust_position_for_orientation(img_width, img_height, actual_width, actual_height, 
-                                  text_width, text_height, margin, image):
-    """
-    根据EXIF方向调整水印位置坐标
-    
-    Args:
-        img_width, img_height: 当前图片尺寸
-        actual_width, actual_height: 实际显示尺寸
-        text_width, text_height: 文字尺寸
-        margin: 边距
-        image: 图片对象
-    
-    Returns:
-        tuple: (x, y) 调整后的坐标
-    """
-    try:
-        exif_data = image._getexif()
-        if exif_data:
-            orientation = exif_data.get(274, 1)
-            
-            # 计算在实际显示尺寸中的右下角位置
-            actual_x = actual_width - text_width - margin
-            actual_y = actual_height - text_height - margin
-            
-            # 根据方向转换坐标
-            if orientation == 1:  # 正常
-                return actual_x, actual_y
-            elif orientation == 2:  # 水平翻转
-                return img_width - actual_x - text_width, actual_y
-            elif orientation == 3:  # 旋转180度
-                return img_width - actual_x - text_width, img_height - actual_y - text_height
-            elif orientation == 4:  # 垂直翻转
-                return actual_x, img_height - actual_y - text_height
-            elif orientation == 5:  # 逆时针旋转90度 + 水平翻转
-                # 实际: (actual_x, actual_y) -> 当前: (img_height - actual_y - text_height, actual_x)
-                return img_height - actual_y - text_height, actual_x
-            elif orientation == 6:  # 顺时针旋转90度
-                # 实际: (actual_x, actual_y) -> 当前: (actual_y, img_width - actual_x - text_width)
-                return actual_y, img_width - actual_x - text_width
-            elif orientation == 7:  # 顺时针旋转90度 + 水平翻转
-                # 实际: (actual_x, actual_y) -> 当前: (actual_y, img_width - (actual_width - actual_x - text_width))
-                return actual_y, img_width - (actual_width - actual_x - text_width)
-            elif orientation == 8:  # 逆时针旋转90度
-                # 实际: (actual_x, actual_y) -> 当前: (img_height - actual_x - text_width, actual_y)
-                return img_height - actual_x - text_width, actual_y
-    
-    except Exception:
-        pass
-    
-    # 默认计算（无EXIF或出错时）
-    return img_width - text_width - margin, img_height - text_height - margin
-
-
-def _add_text_with_orientation(image, text, font, position):
-    """
-    根据EXIF方向添加文字，确保文字方向正确
-    
-    Args:
-        image (PIL.Image): 图片对象
-        text (str): 水印文本
-        font (ImageFont.FreeTypeFont): 字体对象
-        position (tuple): 文字位置 (x, y)
-    """
-    draw = ImageDraw.Draw(image)
-    
-    try:
-        exif_data = image._getexif()
-        if exif_data:
-            orientation = exif_data.get(274, 1)
-            
-            # 根据EXIF方向调整文字
-            # 注意：EXIF方向标签表示的是相机拍摄时的方向
-            # 我们需要反向旋转文字来抵消这个方向变化
-            if orientation == 3:  # 旋转180度
-                # 直接绘制文字然后旋转整个图像区域
-                temp_img = Image.new('RGBA', image.size, (0, 0, 0, 0))
-                temp_draw = ImageDraw.Draw(temp_img)
-                temp_draw.text(position, text, font=font, fill="#FFD700")
-                # 旋转180度
-                rotated_text = temp_img.rotate(180, expand=False)
-                image.paste(rotated_text, (0, 0), rotated_text)
-            elif orientation == 6:  # 顺时针旋转90度
-                # 直接绘制文字然后旋转整个图像区域
-                temp_img = Image.new('RGBA', image.size, (0, 0, 0, 0))
-                temp_draw = ImageDraw.Draw(temp_img)
-                temp_draw.text(position, text, font=font, fill="#FFD700")
-                # 逆时针旋转90度
-                rotated_text = temp_img.rotate(90, expand=False)
-                image.paste(rotated_text, (0, 0), rotated_text)
-            elif orientation == 8:  # 逆时针旋转90度
-                # 直接绘制文字然后旋转整个图像区域
-                temp_img = Image.new('RGBA', image.size, (0, 0, 0, 0))
-                temp_draw = ImageDraw.Draw(temp_img)
-                temp_draw.text(position, text, font=font, fill="#FFD700")
-                # 顺时针旋转90度
-                rotated_text = temp_img.rotate(-90, expand=False)
-                image.paste(rotated_text, (0, 0), rotated_text)
-            else:
-                # 其他方向（1,2,4,5,7）直接绘制文字
-                draw.text(position, text, font=font, fill="#FFD700")
-        else:
-            # 无EXIF信息，直接绘制
-            draw.text(position, text, font=font, fill="#FFD700")
-    
-    except Exception:
-        # 出错时直接绘制
-        draw.text(position, text, font=font, fill="#FFD700")
-
-
-def _create_rotated_text(text, font, angle):
-    """
-    创建旋转文字的尺寸估算
-    
-    Args:
-        text (str): 文本内容
-        font (ImageFont.FreeTypeFont): 字体对象
-        angle (int): 旋转角度
-    
-    Returns:
-        tuple: (width, height) 旋转后的尺寸
-    """
-    # 创建临时图像来测量文字尺寸
-    temp_img = Image.new('RGB', (1, 1))
-    temp_draw = ImageDraw.Draw(temp_img)
-    bbox = temp_draw.textbbox((0, 0), text, font=font)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
-    
-    # 估算旋转后的尺寸（简化计算）
-    import math
-    angle_rad = math.radians(abs(angle))
-    rotated_width = int(text_width * abs(math.cos(angle_rad)) + text_height * abs(math.sin(angle_rad)))
-    rotated_height = int(text_width * abs(math.sin(angle_rad)) + text_height * abs(math.cos(angle_rad)))
-    
-    return (rotated_width, rotated_height)
 
 
 def _save_image_with_metadata(image, output_path, original_format, original_info, original_exif):
@@ -456,7 +265,7 @@ def process_folder(input_folder, font_path=None):
 
 def main():
     parser = argparse.ArgumentParser(description='为照片批量添加拍摄时间水印')
-    parser.add_argument('--input_folder', required=True, help='包含照片的输入文件夹路径')
+    parser.add_argument('input_folder', help='包含照片的输入文件夹路径')
     parser.add_argument('--font', help='字体文件路径（DBLCDTempBlack字体）')
     
     args = parser.parse_args()
