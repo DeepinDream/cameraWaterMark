@@ -140,9 +140,9 @@ def add_watermark(image_path, output_path, font_path=None):
             # 计算水印位置（基于调整后的图片）
             position = _calculate_watermark_position(adjusted_image, watermark_text, font)
             
-            # 添加水印
+            # 添加水印（带阴影和加粗效果）
             draw = ImageDraw.Draw(adjusted_image)
-            draw.text(position, watermark_text, font=font, fill="#FFD700")
+            _add_text_with_shadow(draw, position, watermark_text, font)
             
             # 恢复原始方向
             final_image = _restore_original_orientation(adjusted_image, rotation_info)
@@ -171,7 +171,7 @@ def _calculate_optimal_font_size(text, img_width, img_height):
         int: 计算得出的字体大小
     """
     img_area = img_width * img_height
-    target_text_area = img_area * 0.03
+    target_text_area = img_area * 0.04
     
     # 经验公式：考虑字符宽高比和文字密度
     char_width_ratio = 0.6  # 字符平均宽高比
@@ -361,6 +361,41 @@ def _restore_original_orientation(image, rotation_info):
         return image.rotate(-90, expand=True)
     
     return image
+
+
+def _add_text_with_shadow(draw, position, text, font):
+    """
+    为文字添加阴影和加粗效果
+    
+    Args:
+        draw (ImageDraw.Draw): 绘图对象
+        position (tuple): 文字位置 (x, y)
+        text (str): 文字内容
+        font (ImageFont.FreeTypeFont): 字体对象
+    """
+    x, y = position
+    
+    # 阴影参数
+    shadow_offset = 2  # 阴影偏移量
+    shadow_color = "#000000"  # 黑色阴影
+    
+    # 加粗参数
+    bold_offset = 1  # 加粗偏移量
+    
+    # 绘制阴影（稍微偏移）
+    shadow_x = x + shadow_offset
+    shadow_y = y + shadow_offset
+    draw.text((shadow_x, shadow_y), text, font=font, fill=shadow_color)
+    
+    # 绘制加粗效果（通过多次绘制实现）
+    for dx in range(-bold_offset, bold_offset + 1):
+        for dy in range(-bold_offset, bold_offset + 1):
+            if dx == 0 and dy == 0:
+                continue  # 跳过中心位置，留给主文字
+            draw.text((x + dx, y + dy), text, font=font, fill="#ECAE35")
+    
+    # 绘制主文字（金色）
+    draw.text((x, y), text, font=font, fill="#ECAE35")
 
 
 def _save_image_with_metadata(image, output_path, original_format, original_info, original_exif):
