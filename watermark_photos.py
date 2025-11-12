@@ -44,7 +44,7 @@ def get_photo_taken_time(image_path):
 
 def add_watermark(image_path, output_path, font_path=None):
     """
-    为照片添加拍摄时间水印
+    为照片添加拍摄时间水印，处理EXIF方向标签
     
     Args:
         image_path (str): 输入图片路径
@@ -62,30 +62,39 @@ def add_watermark(image_path, output_path, font_path=None):
             original_info = image.info.copy()
             original_exif = original_info.get('exif', b'')
             
+            # 获取EXIF方向标签
+            orientation = _get_exif_orientation(image)
+            
+            # 根据方向标签调整图片方向以便添加水印
+            adjusted_image, rotation_info = _adjust_image_for_watermark(image, orientation)
+            
             # 获取拍摄时间和水印文本
             taken_time = get_photo_taken_time(image_path)
             watermark_text = taken_time.strftime('%Y-%m-%d %H:%M:%S')
             
-            # 获取图片尺寸
-            img_width, img_height = image.size
+            # 获取调整后的图片尺寸
+            adj_width, adj_height = adjusted_image.size
             
             # 计算字体大小
-            font_size = _calculate_optimal_font_size(watermark_text, img_width, img_height)
+            font_size = _calculate_optimal_font_size(watermark_text, adj_width, adj_height)
             
             # 加载字体
             font = _load_font(font_path, font_size)
             
-            # 计算水印位置
-            position = _calculate_watermark_position(image, watermark_text, font)
+            # 计算水印位置（基于调整后的图片）
+            position = _calculate_watermark_position(adjusted_image, watermark_text, font)
             
             # 添加水印
-            draw = ImageDraw.Draw(image)
+            draw = ImageDraw.Draw(adjusted_image)
             draw.text(position, watermark_text, font=font, fill="#FFD700")
             
-            # 保存图片，保留所有原始信息
-            _save_image_with_metadata(image, output_path, original_format, original_info, original_exif)
+            # 恢复原始方向
+            final_image = _restore_original_orientation(adjusted_image, rotation_info)
             
-            print(f"✓ 已处理: {os.path.basename(image_path)} -> {watermark_text} (字体大小: {font_size}px)")
+            # 保存图片，保留所有原始信息
+            _save_image_with_metadata(final_image, output_path, original_format, original_info, original_exif)
+            
+            print(f"✓ 已处理: {os.path.basename(image_path)} -> {watermark_text} (字体大小: {font_size}px, 方向: {orientation})")
             return True
             
     except Exception as e:
@@ -188,6 +197,91 @@ def _calculate_watermark_position(image, text, font):
     y = img_height - text_height - margin
     
     return (x, y)
+
+
+def _get_exif_orientation(image):
+    """
+    获取图片的EXIF方向标签
+    
+    Args:
+        image (PIL.Image): 图片对象
+    
+    Returns:
+        int: 方向标签值 (1-8)
+    """
+    try:
+        exif_data = image._getexif()
+        if exif_data:
+            for tag, value in exif_data.items():
+                if TAGS.get(tag) == 'Orientation':
+                    return value
+    except Exception:
+        pass
+    
+    return 1  # 默认方向
+
+
+def _adjust_image_for_watermark(image, orientation):
+    """
+    根据EXIF方向标签调整图片方向，以便正确添加水印
+    
+    Args:
+        image (PIL.Image): 原始图片对象
+        orientation (int): EXIF方向标签
+    
+    Returns:
+        tuple: (调整后的图片, 旋转信息)
+    """
+    rotation_info = {
+        'rotated': False,
+        'angle': 0,
+        'orientation': orientation
+    }
+    
+    adjusted_image = image.copy()
+    
+    if orientation == 3:
+        # 180度旋转
+        adjusted_image = adjusted_image.rotate(180, expand=True)
+        rotation_info['rotated'] = True
+        rotation_info['angle'] = 180
+    elif orientation == 6:
+        # 顺时针旋转90度
+        adjusted_image = adjusted_image.rotate(-90, expand=True)
+        rotation_info['rotated'] = True
+        rotation_info['angle'] = -90
+    elif orientation == 8:
+        # 逆时针旋转90度
+        adjusted_image = adjusted_image.rotate(90, expand=True)
+        rotation_info['rotated'] = True
+        rotation_info['angle'] = 90
+    
+    return adjusted_image, rotation_info
+
+
+def _restore_original_orientation(image, rotation_info):
+    """
+    恢复图片的原始方向
+    
+    Args:
+        image (PIL.Image): 已添加水印的图片
+        rotation_info (dict): 旋转信息
+    
+    Returns:
+        PIL.Image: 恢复方向后的图片
+    """
+    if not rotation_info['rotated']:
+        return image
+    
+    # 恢复到原始方向
+    if rotation_info['angle'] == 180:
+        return image.rotate(180, expand=True)
+    elif rotation_info['angle'] == -90:
+        return image.rotate(90, expand=True)
+    elif rotation_info['angle'] == 90:
+        return image.rotate(-90, expand=True)
+    
+    return image
 
 
 def _save_image_with_metadata(image, output_path, original_format, original_info, original_exif):
